@@ -1,31 +1,84 @@
 const express = require('express');
-const fs = require('fs');
-const cors = require('cors');
+const mongoose = require('mongoose');
+const path = require('path');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-const PASSWORD = "7211.dx"; // ←改成你自己的访问密码
-const DATA_FILE = "./note.txt";
-
-app.use(cors());
+// 解析json
 app.use(express.json());
-app.use(express.static('public'));
+// 托管前端静态页面
+app.use(express.static(path.join(__dirname, 'public')));
 
-//读取笔记
-app.get('/api/note',(req,res)=>{
-  const pwd = req.query.pwd;
-  if(pwd!==PASSWORD) return res.status(403).json({ok:false,msg:"密码错误"});
-  if(!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE,"","utf8");
-  const content = fs.readFileSync(DATA_FILE,"utf8");
-  res.json({ok:true,content});
+// 连接MongoDB
+const mongoUri = process.env.MONGODB_URI;
+mongoose.connect(mongoUri)
+.then(()=>{
+  console.log("✅ MongoDB数据库连接成功");
+})
+.catch(err=>{
+  console.error("❌ MongoDB连接失败",err);
 })
 
-//保存笔记
-app.post('/api/note',(req,res)=>{
-  const {pwd,text}=req.body;
-  if(pwd!==PASSWORD) return res.status(403).json({ok:false,msg:"密码错误"});
-  fs.writeFileSync(DATA_FILE,text,"utf8");
-  res.json({ok:true});
+// 笔记模型
+const noteSchema = new mongoose.Schema({
+  title:String,
+  content:String,
+  createTime:{type:Date,default:Date.now},
+  updateTime:{type:Date,default:Date.now}
+})
+const Note = mongoose.model('Note',noteSchema);
+
+// -------- 后端接口 全部走云数据库 --------
+// 获取全部笔记
+app.get("/api/notes",async (req,res)=>{
+  try{
+    const list = await Note.find().sort({updateTime:-1});
+    res.json(list);
+  }catch(e){
+    res.status(500).json({error:e.message})
+  }
 })
 
-app.listen(PORT,()=>console.log("run on "+PORT));
+// 新建笔记
+app.post("/api/notes",async (req,res)=>{
+  try{
+    const {title,content}=req.body;
+    const doc = new Note({title,content});
+    await doc.save();
+    res.json(doc);
+  }catch(e){
+    res.status(500).json({error:e.message})
+  }
+})
+
+// 编辑保存笔记
+app.put("/api/notes/:id",async (req,res)=>{
+  try{
+    const {title,content}=req.body;
+    const doc = await Note.findByIdAndUpdate(req.params.id,{
+      title,content,updateTime:Date.now()
+    },{new:true})
+    res.json(doc);
+  }catch(e){
+    res.status(500).json({error:e.message})
+  }
+})
+
+// 删除笔记
+app.delete("/api/notes/:id",async (req,res)=>{
+  try{
+    await Note.findByIdAndDelete(req.params.id);
+    res.json({ok:true})
+  }catch(e){
+    res.status(500).json({error:e.message})
+  }
+})
+
+// 所有路由返回index.html，支持前端路由
+app.get("*",(req,res)=>{
+  res.sendFile(path.join(__dirname,"public/index.html"))
+})
+
+app.listen(PORT,()=>{
+  console.log(`服务启动，端口:${PORT}`)
+})
