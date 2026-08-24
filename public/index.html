@@ -1,62 +1,227 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>云端同步笔记</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#f4f6f8;padding:16px;max-width:920px;margin:0 auto;font-family:system-ui}
-#lockArea{display:flex;gap:8px;margin-bottom:12px}
-#pw{flex:1;padding:10px;font-size:16px}
-#btnUnlock{padding:10px 18px;cursor:pointer}
-#main{display:none}
-#txt{width:100%;min-height:75vh;padding:14px;font-size:16px;border:1px solid #bbb;border-radius:8px;resize:vertical;white-space:pre-wrap}
-.tip{margin:8px 0;color:#666;font-size:14px}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云笔记</title>
+  <style>
+    :root{
+      --bg:#ffffff;
+      --text:#222222;
+      --card:#f7f7f7;
+      --border:#dddddd;
+      --btn-bg:#2478ff;
+      --btn-text:#fff;
+    }
+    [data-theme="dark"]{
+      --bg:#1a1a22;
+      --text:#eeeeee;
+      --card:#272733;
+      --border:#444455;
+      --btn-bg:#3b82f6;
+      --btn-text:#ffffff;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;font-family:system-ui}
+    body{
+      background:var(--bg);
+      color:var(--text);
+      transition: background 0.3s,color 0.3s;
+      padding:16px;
+      max-width:1100px;
+      margin:0 auto;
+    }
+    .header{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom:20px;
+    }
+    button{
+      background:var(--btn-bg);
+      color:var(--btn-text);
+      border:none;
+      padding:8px 14px;
+      border-radius:6px;
+      cursor:pointer;
+    }
+    .theme-btn{
+      background:var(--card);
+      color:var(--text);
+      border:1px solid var(--border);
+    }
+    .note-card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:8px;
+      padding:14px;
+      margin-bottom:12px;
+    }
+    input,textarea{
+      width:100%;
+      background:var(--bg);
+      color:var(--text);
+      border:1px solid var(--border);
+      border-radius:6px;
+      padding:10px;
+      margin:8px 0;
+    }
+    textarea{min-height:140px;resize:vertical}
+    .btn-group{
+      display:flex;
+      gap:8px;
+      margin-top:8px;
+    }
+    .empty{
+      text-align:center;padding:40px;color:#888;
+    }
+  </style>
 </head>
 <body>
-<div id="lockArea">
-<input id="pw" placeholder="输入访问密码">
-<button id="btnUnlock">解锁云端笔记</button>
-</div>
+  <div class="header">
+    <h1>云笔记</h1>
+    <div>
+      <button class="theme-btn" id="toggleTheme">切换深色/浅色</button>
+      <button id="addBtn" style="margin-left:8px">新建笔记</button>
+    </div>
+  </div>
 
-<div id="main">
-<div class="tip">自动保存，手机电脑打开此网址全部同步</div>
-<textarea id="txt" placeholder="在这里写笔记..."></textarea>
-</div>
+  <!-- 编辑表单 -->
+  <div id="editBox" style="display:none" class="note-card">
+    <h3 id="editTitle">新建笔记</h3>
+    <input id="inpTitle" placeholder="标题">
+    <textarea id="inpContent" placeholder="笔记内容"></textarea>
+    <div class="btn-group">
+      <button id="saveBtn">保存</button>
+      <button id="cancelBtn">取消</button>
+    </div>
+  </div>
+
+  <!-- 笔记列表 -->
+  <div id="listWrap"></div>
 
 <script>
-let baseUrl = location.origin;
-let pass="";
-const lockArea = document.getElementById("lockArea");
-const main = document.getElementById("main");
-const pwEl = document.getElementById("pw");
-const unlockBtn = document.getElementById("btnUnlock");
-const txtEl = document.getElementById("txt");
-let saveTimer=null;
+const themeKey = "note_theme";
+let editId = null;
 
-unlockBtn.onclick = async ()=>{
-  pass = pwEl.value.trim();
-  const res = await fetch(`${baseUrl}/api/note?pwd=${encodeURIComponent(pass)}`);
-  const data = await res.json();
-  if(!data.ok){alert(data.msg);return;}
-  lockArea.style.display="none";
-  main.style.display="block";
-  txtEl.value = data.content;
+// 主题切换
+function loadTheme(){
+  const t = localStorage.getItem(themeKey);
+  if(t) document.documentElement.setAttribute("data-theme",t);
+}
+loadTheme();
+document.getElementById("toggleTheme").onclick=()=>{
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur==="dark" ? "light":"dark";
+  document.documentElement.setAttribute("data-theme",next);
+  localStorage.setItem(themeKey,next);
 }
 
-//自动保存到云端
-txtEl.oninput = ()=>{
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(async ()=>{
-    await fetch(`${baseUrl}/api/note`,{
+const editBox = document.getElementById("editBox");
+const inpTitle = document.getElementById("inpTitle");
+const inpContent = document.getElementById("inpContent");
+const editTitleDom = document.getElementById("editTitle");
+const listWrap = document.getElementById("listWrap");
+const addBtn = document.getElementById("addBtn");
+const saveBtn = document.getElementById("saveBtn");
+const cancelBtn = document.getElementById("cancelBtn");
+
+// 加载笔记列表，请求后端接口
+async function loadNotes(){
+  const res = await fetch("/api/notes");
+  const arr = await res.json();
+  renderList(arr);
+}
+
+function renderList(arr){
+  if(arr.length===0){
+    listWrap.innerHTML=`<div class="empty">暂无笔记，点击新建笔记</div>`;
+    return;
+  }
+  listWrap.innerHTML = arr.map(item=>`
+  <div class="note-card">
+    <h4>${escapeHtml(item.title||"无标题")}</h4>
+    <div style="margin:8px 0;white-space:pre-wrap">${escapeHtml(item.content||"")}</div>
+    <div class="btn-group">
+      <button data-id="${item._id}" class="edit-one">编辑</button>
+      <button data-id="${item._id}" class="del-one" style="background:#dc3545">删除</button>
+    </div>
+  </div>`).join("");
+
+  // 绑定编辑删除
+  document.querySelectorAll(".edit-one").forEach(el=>{
+    el.onclick=()=>openEdit(el.dataset.id)
+  })
+  document.querySelectorAll(".del-one").forEach(el=>{
+    el.onclick=()=>delNote(el.dataset.id)
+  })
+}
+
+function escapeHtml(str){
+  if(!str) return "";
+  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// 新建
+addBtn.onclick=()=>{
+  editId=null;
+  editTitleDom.innerText="新建笔记";
+  inpTitle.value="";
+  inpContent.value="";
+  editBox.style.display="block";
+}
+
+cancelBtn.onclick=()=>{
+  editBox.style.display="none";
+}
+
+// 打开编辑
+async function openEdit(id){
+  const res = await fetch(`/api/notes`);
+  const arr = await res.json();
+  const item = arr.find(x=>x._id===id);
+  editId = id;
+  editTitleDom.innerText="编辑笔记";
+  inpTitle.value = item.title||"";
+  inpContent.value = item.content||"";
+  editBox.style.display="block";
+}
+
+// 保存（新建/编辑）
+saveBtn.onclick=async ()=>{
+  const title = inpTitle.value.trim();
+  const content = inpContent.value.trim();
+  if(!title&&!content){
+    alert("标题或内容不能为空");
+    return;
+  }
+  if(editId===null){
+    // 新建
+    await fetch("/api/notes",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({pwd:pass,text:txtEl.value})
+      body:JSON.stringify({title,content})
     })
-  },800)
+  }else{
+    // 更新
+    await fetch(`/api/notes/${editId}`,{
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({title,content})
+    })
+  }
+  editBox.style.display="none";
+  loadNotes();
 }
+
+// 删除笔记
+async function delNote(id){
+  if(!confirm("确认删除这条笔记？")) return;
+  await fetch(`/api/notes/${id}`,{method:"DELETE"});
+  loadNotes();
+}
+
+// 页面初始化加载
+loadNotes();
 </script>
 </body>
 </html>
