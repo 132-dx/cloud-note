@@ -4,7 +4,7 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const PASSWORD = "mynote666"; // ←改成你自己的访问密码
+const PASSWORD = "7211.dx"; // ←改成你自己的访问密码
 const DATA_FILE = "./note.txt";
 
 app.use(cors());
